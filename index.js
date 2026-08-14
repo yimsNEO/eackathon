@@ -3,20 +3,20 @@ const cors = require('cors');
 require('dotenv').config();
 
 // 1. 화면별 라우터 불러오기
-const minutesRouter = require('./routes/minutes');
+const meetingsRouter = require('./routes/meetings'); // 핸드오프 규격에 맞춰 minutes -> meetings 변경
 const groupRouter = require('./routes/group');
-const calendarRouter = require('./routes/calender');
+const calendarRouter = require('./routes/calendar'); // 오타 수정 (calender -> calendar)
 const todoRouter = require('./routes/todo');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 4000; // 핸드오프 가이드 규격(4000번 포트) 반영
 
 // 2. 미들웨어 설정
 app.use(cors());
 app.use(express.json());
 
 // 3. API 엔드포인트 연결
-app.use('/api/minutes', minutesRouter);
+app.use('/api/meetings', meetingsRouter); // 핸드오프 규격 반영 (/api/meetings)
 app.use('/api/groups', groupRouter);
 app.use('/api/calendar', calendarRouter);
 app.use('/api/todos', todoRouter);
