@@ -595,6 +595,314 @@ A: 현재는 그룹 생성자만 admin, 나머지는 member
 
 ---
 
+## 📋 회의록 (Meetings) API 가이드
+
+프론트엔드에서 회의록 추가, 조회, 수정, AI 요약 생성 기능을 구현했습니다.
+
+### API 엔드포인트 목록
+
+| 메서드 | 엔드포인트 | 설명 |
+| --- | --- | --- |
+| GET | /api/meetings | 회의록 목록 조회 |
+| POST | /api/meetings | 새 회의록 생성 |
+| GET | /api/meetings/:meetingId | 회의록 상세 조회 |
+| PATCH | /api/meetings/:meetingId | 회의 원문 수정 |
+| POST | /api/meetings/:meetingId/generate | AI 요약 생성 (LLM 호출) |
+| DELETE | /api/meetings/:meetingId | 회의록 삭제 |
+
+---
+
+### 1️⃣ GET /api/meetings - 회의록 목록 조회
+
+#### 📊 요청
+```
+GET /api/meetings?groupId=uuid (선택)
+Authorization: Bearer <JWT>
+```
+
+#### 📊 응답 (200 OK)
+```json
+[
+  {
+    "id": "uuid",
+    "title": "정기 임원진 회의",
+    "meeting_date": "2026-08-15",
+    "group_id": "uuid",
+    "group_name": "임원진",
+    "generated": false,
+    "created_at": "2026-08-15T10:00:00Z"
+  }
+]
+```
+
+---
+
+### 2️⃣ POST /api/meetings - 새 회의록 생성
+
+#### ✨ 요청
+```json
+{
+  "group_id": "uuid",
+  "title": "정기 임원진 회의",
+  "meeting_date": "2026-08-15"
+}
+```
+
+#### 📊 응답 (201 Created)
+```json
+{
+  "id": "uuid",
+  "title": "정기 임원진 회의",
+  "meeting_date": "2026-08-15",
+  "group_id": "uuid",
+  "raw_content": null,
+  "generated": false,
+  "created_at": "2026-08-15T10:00:00Z"
+}
+```
+
+---
+
+### 3️⃣ GET /api/meetings/:meetingId - 회의록 상세 조회
+
+#### 📊 요청
+```
+GET /api/meetings/:meetingId
+Authorization: Bearer <JWT>
+```
+
+#### 📊 응답 (200 OK)
+```json
+{
+  "id": "uuid",
+  "title": "정기 임원진 회의",
+  "meeting_date": "2026-08-15",
+  "raw_content": "회의 내용...",
+  "generated": true,
+  "meeting_attendees": [
+    {
+      "user_id": "uuid",
+      "users": { "name": "김도윤", "email": "kim@example.com" }
+    }
+  ],
+  "agenda_items": [
+    {
+      "id": "uuid",
+      "content": "예산안 초안 승인",
+      "status": "confirmed"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "uuid",
+      "title": "장소 예약 확정하기",
+      "assignee_id": "uuid",
+      "due_date": "2026-08-20",
+      "status": "pending"
+    }
+  ]
+}
+```
+
+---
+
+### 4️⃣ PATCH /api/meetings/:meetingId - 회의 원문 수정
+
+#### ✨ 요청
+```json
+{
+  "raw_content": "수정된 회의 내용..."
+}
+```
+
+#### 📊 응답 (200 OK)
+```json
+{
+  "id": "uuid",
+  "raw_content": "수정된 회의 내용..."
+}
+```
+
+---
+
+### 5️⃣ POST /api/meetings/:meetingId/generate - AI 요약 생성 (LLM)
+
+#### ⭐ 핵심 기능: OpenAI GPT-4o-mini 호출
+
+#### 📊 요청
+```
+POST /api/meetings/:meetingId/generate
+Authorization: Bearer <JWT>
+Body: 없음 (이미 저장된 raw_content와 meeting_attendees 사용)
+```
+
+#### 📊 응답 (200 OK)
+```json
+{
+  "meeting_id": "uuid",
+  "generated": true,
+  "agenda_items": [
+    {
+      "id": "uuid",
+      "content": "예산안 초안 승인",
+      "status": "confirmed"
+    },
+    {
+      "id": "uuid",
+      "content": "홍보 포스터 시안 최종 선택",
+      "status": "needs_opinion"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "uuid",
+      "title": "장소 예약 확정하기",
+      "assignee_id": "uuid",
+      "due_date": "2026-08-20",
+      "status": "pending"
+    }
+  ]
+}
+```
+
+#### 💻 구현 코드 예시 (Node.js + Express + OpenAI)
+
+```javascript
+const OpenAI = require('openai').default;
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
+// POST /api/meetings/:meetingId/generate
+router.post('/api/meetings/:meetingId/generate', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: { message: '토큰이 없습니다' } });
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !user) return res.status(401).json({ error: { message: '인증 실패' } });
+
+    const { meetingId } = req.params;
+
+    // 1. 회의록 조회
+    const { data: meeting, error: meetingError } = await supabase
+      .from('meetings')
+      .select('*')
+      .eq('id', meetingId)
+      .single();
+
+    if (meetingError || !meeting) {
+      return res.status(404).json({ error: { message: '회의록이 없습니다' } });
+    }
+
+    // 2. 권한 검증 (그룹 멤버 확인)
+    const { data: isMember } = await supabase
+      .from('group_members')
+      .select('id')
+      .eq('group_id', meeting.group_id)
+      .eq('user_id', user.id)
+      .single();
+
+    if (!isMember) {
+      return res.status(403).json({ error: { message: '그룹 멤버가 아닙니다' } });
+    }
+
+    // 3. raw_content 확인
+    if (!meeting.raw_content?.trim()) {
+      return res.status(400).json({ error: { message: '회의 원문이 비어있습니다' } });
+    }
+
+    // 4. OpenAI API 호출
+    const prompt = \`다음은 회의록입니다. 확정 안건, 의견 필요 안건, 할 일을 JSON 형식으로 분류해주세요.
+
+회의록:
+\${meeting.raw_content}
+
+다음 JSON 형식으로 응답하세요:
+{
+  "agenda_items": [
+    { "content": "안건 내용", "status": "confirmed" 또는 "needs_opinion" }
+  ],
+  "tasks": [
+    { "title": "할일 내용", "due_date": "YYYY-MM-DD" }
+  ]
+}\`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.5
+    });
+
+    const responseText = completion.choices[0].message.content;
+    const parsed = JSON.parse(responseText);
+
+    // 5. 데이터베이스에 저장
+    // 안건 저장
+    const agendaPromises = (parsed.agenda_items || []).map(item =>
+      supabase.from('agenda_items').insert({
+        meeting_id: meetingId,
+        content: item.content,
+        status: item.status || 'confirmed'
+      })
+    );
+
+    // 할일 저장
+    const taskPromises = (parsed.tasks || []).map(task =>
+      supabase.from('tasks').insert({
+        meeting_id: meetingId,
+        title: task.title,
+        due_date: task.due_date || null,
+        status: 'pending'
+      })
+    );
+
+    // meetings 테이블 generated = true로 업데이트
+    await supabase
+      .from('meetings')
+      .update({ generated: true })
+      .eq('id', meetingId);
+
+    await Promise.all([...agendaPromises, ...taskPromises]);
+
+    // 6. 생성된 데이터 반환
+    const { data: agendaItems } = await supabase
+      .from('agenda_items')
+      .select('*')
+      .eq('meeting_id', meetingId);
+
+    const { data: tasks } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('meeting_id', meetingId);
+
+    return res.status(200).json({
+      meeting_id: meetingId,
+      generated: true,
+      agenda_items: agendaItems || [],
+      tasks: tasks || []
+    });
+
+  } catch (err) {
+    console.error('AI 요약 생성 에러:', err);
+    if (err instanceof SyntaxError) {
+      return res.status(500).json({ 
+        error: { 
+          message: 'OpenAI 응답 파싱 실패. 다시 시도해주세요.',
+          retry: true
+        } 
+      });
+    }
+    return res.status(500).json({ error: { message: '서버 오류' } });
+  }
+});
+```
+
+---
+
 ## 🎯 최종 결과 이미지
 
 ```
