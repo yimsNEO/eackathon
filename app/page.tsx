@@ -181,6 +181,30 @@ export default function AppWrapper() {
     if (error) {
       setMessage('회원가입 실패: ' + error.message);
     } else {
+      // ✨ Supabase 회원가입 성공 후 백엔드 DB에 사용자 정보 저장
+      try {
+        const token = data?.session?.access_token || '';
+        
+        const response = await fetch(buildApiUrl('/api/users'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            email: email.trim(),
+            name: name.trim()
+          })
+        });
+
+        if (!response.ok) {
+          console.warn('백엔드 DB 저장 실패:', await response.text());
+          // 백엔드 저장이 실패해도 Supabase 인증은 성공했으므로 진행
+        }
+      } catch (err) {
+        console.warn('백엔드 연결 실패:', err);
+      }
+
       setMessage('회원가입 성공! 이메일을 확인하거나 로그인하세요.');
       setTimeout(() => {
         setIsSignUp(false);

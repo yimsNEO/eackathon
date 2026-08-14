@@ -7,13 +7,36 @@
 
 ## 🔄 변경된 API 요청/응답 형식
 
-### 1️⃣ 회원가입 (변경사항 없음 - 프론트에서만 처리)
+### 1️⃣ 회원가입 API: POST /api/users
+
+#### ✨ 새로운 요청 형식
+```json
+{
+  "email": "hong@gmail.com",
+  "name": "홍길동"
+}
+```
+
+**헤더 필수:**
+```
+Authorization: Bearer <JWT_ACCESS_TOKEN>  // Supabase 회원가입 후 발급된 토큰
+Content-Type: application/json
+```
+
+#### 📊 응답 형식
+```json
+{
+  "id": "uuid",
+  "email": "hong@gmail.com",
+  "name": "홍길동",
+  "created_at": "2026-08-15T10:00:00Z"
+}
+```
 
 **프론트 수정:**
 - Supabase auth.signUp()에서 `options.data.name` 포함
-- 사용자 프로필에 이름 저장됨
-
-**백엔드**: 현재 상태 유지 (Supabase auth 핸들링)
+- 회원가입 성공 후 **POST /api/users** 호출해서 백엔드 DB에 사용자 정보 저장
+- JWT 토큰은 Supabase 응답의 `session.access_token` 사용
 
 ---
 
@@ -50,6 +73,72 @@
 ---
 
 ## 🛠️ 백엔드 구현 체크리스트
+
+### Phase 0: 사용자 관리 API 구현
+
+#### ❌ 필요한 테이블 구조 (users 또는 user_profiles 테이블)
+```sql
+-- 사용자 정보 저장 테이블
+CREATE TABLE users (
+  id UUID PRIMARY KEY,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  name VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  FOREIGN KEY (id) REFERENCES auth.users(id)
+);
+```
+
+#### 💻 구현 코드 예시 (Node.js + Express)
+
+```javascript
+// POST /api/users (회원가입 후 사용자 정보 저장)
+router.post('/api/users', async (req, res) => {
+  try {
+    // 1. 인증 검증
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: { message: '토큰이 없습니다' } });
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !user) return res.status(401).json({ error: { message: '인증 실패' } });
+
+    // 2. 요청 데이터 추출
+    const { email, name } = req.body;
+    
+    if (!email?.trim() || !name?.trim()) {
+      return res.status(400).json({ error: { message: '이메일과 이름은 필수입니다' } });
+    }
+
+    // 3. 백엔드 DB에 사용자 정보 저장
+    const { data: savedUser, error: userError } = await supabase
+      .from('users')
+      .upsert({
+        id: user.id,
+        email: email.trim(),
+        name: name.trim()
+      }, { onConflict: 'id' })
+      .select()
+      .single();
+
+    if (userError) {
+      return res.status(500).json({ error: { message: '사용자 정보 저장 실패' } });
+    }
+
+    return res.status(201).json({
+      id: savedUser.id,
+      email: savedUser.email,
+      name: savedUser.name,
+      created_at: savedUser.created_at
+    });
+
+  } catch (err) {
+    console.error('사용자 등록 에러:', err);
+    return res.status(500).json({ error: { message: '서버 오류' } });
+  }
+});
+```
+
+---
 
 ### Phase 1: 데이터베이스 스키마 확인
 
@@ -236,11 +325,15 @@ $$;
 
 1. ✅ **프론트**: 회원가입 폼에 이름 필드 추가 - **완료**
 2. ✅ **프론트**: 그룹 생성 시 admin_name 전송 - **완료**
-3. ⏳ **DB**: groups 테이블에 admin_name, admin_email 컬럼 추가
-4. ⏳ **API**: POST /api/groups에서 admin_name 받기 및 저장
-5. ⏳ **API**: 그룹 생성 시 admin을 자동으로 group_members에 추가
-6. ⏳ **API**: GET /api/groups에 admin_name 필드 포함
-7. ⏳ **테스트**: 그룹 생성 후 멤버 목록에서 admin 확인
+3. ✅ **프론트**: 회원가입 후 POST /api/users 호출 - **완료**
+4. ⏳ **DB**: users 테이블 생성 (이메일, 이름 저장)
+5. ⏳ **API**: POST /api/users 엔드포인트 구현
+6. ⏳ **DB**: groups 테이블에 admin_name, admin_email 컬럼 추가
+7. ⏳ **API**: POST /api/groups에서 admin_name 받기 및 저장
+8. ⏳ **API**: 그룹 생성 시 admin을 group_members에 자동 추가
+9. ⏳ **API**: GET /api/groups에 admin_name 필드 포함
+10. ⏳ **테스트**: 회원가입 후 users 테이블에 저장 확인
+11. ⏳ **테스트**: 그룹 생성 후 admin_name 확인
 
 ---
 
@@ -270,11 +363,15 @@ WHERE admin_name IS NULL;
 
 ## ✨ 완료 체크리스트
 
+- [ ] users 테이블 생성 (id, email, name, created_at)
+- [ ] POST /api/users 엔드포인트 구현
+- [ ] 회원가입 테스트: users 테이블에 이메일과 이름 저장 확인
 - [ ] groups 테이블에 admin_name, admin_email 컬럼 추가
 - [ ] POST /api/groups에서 admin_name 받아서 저장
 - [ ] 그룹 생성 시 admin을 group_members에 자동 추가 (role='admin')
 - [ ] GET /api/groups 응답에 admin_name 포함
 - [ ] GET /api/groups/:id 응답에 admin_name 포함
+- [ ] 로컬 테스트: 회원가입 후 users 테이블 확인
 - [ ] 로컬 테스트: 그룹 생성 후 목록에서 admin 이름 확인
 - [ ] 로컬 테스트: 그룹 상세 페이지에서 admin 표시 확인 (👑)
 
@@ -282,7 +379,7 @@ WHERE admin_name IS NULL;
 
 ## 🚀 테스트 순서
 
-### 1단계: 로컬 테스트
+### 1단계: 로컬 테스트 시작
 ```bash
 # 백엔드
 npm run dev  # localhost:4000
@@ -291,17 +388,32 @@ npm run dev  # localhost:4000
 npm run dev  # localhost:3000
 ```
 
-### 2단계: 회원가입 테스트
+### 2단계: 회원가입 테스트 ⭐ (새로 추가)
 - 이름: "테스트사용자"
 - 이메일: "test@example.com"
 - 비밀번호: "test1234"
+- **확인**: users 테이블에 이메일과 이름 저장됨
+- **예상 결과**: 
+  ```sql
+  SELECT * FROM users WHERE email = 'test@example.com';
+  -- id, email: test@example.com, name: 테스트사용자, created_at: ...
+  ```
 
-### 3단계: 그룹 생성 테스트
+### 3단계: 로그인 테스트
+- 이메일: "test@example.com"
+- 비밀번호: "test1234"
+- 성공하면 대시보드로 이동
+
+### 4단계: 그룹 생성 테스트
 - 그룹 이름: "테스트그룹"
-- 예상 결과: admin_name = "테스트사용자"
+- 예상 결과: 
+  - admin_name = "테스트사용자"
+  - groups 테이블: admin_name 저장됨
+  - group_members 테이블: admin 역할로 자동 추가
 
-### 4단계: 그룹 상세 확인
+### 5단계: 그룹 상세 확인
 - 멤버 목록에서 "테스트사용자 👑 / 관리자" 표시 확인
+- 그룹 정보에 "관리자: 테스트사용자" 표시 확인
 
 ---
 
