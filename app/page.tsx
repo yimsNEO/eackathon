@@ -122,6 +122,7 @@ function buildCalendarDays() {
 export default function AppWrapper() {
   const [session, setSession] = useState(null);
   const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [loading, setLoading] = useState(true);
@@ -152,6 +153,11 @@ export default function AppWrapper() {
     e.preventDefault();
     setMessage('');
     
+    if (!name.trim()) {
+      setMessage('이름을 입력하세요.');
+      return;
+    }
+
     if (password !== passwordConfirm) {
       setMessage('비밀번호가 일치하지 않습니다.');
       return;
@@ -162,9 +168,14 @@ export default function AppWrapper() {
       return;
     }
 
-    const { error } = await supabase.auth.signUp({ 
+    const { error, data } = await supabase.auth.signUp({ 
       email, 
-      password 
+      password,
+      options: {
+        data: {
+          name: name.trim()
+        }
+      }
     });
     
     if (error) {
@@ -174,6 +185,7 @@ export default function AppWrapper() {
       setTimeout(() => {
         setIsSignUp(false);
         setEmail('');
+        setName('');
         setPassword('');
         setPasswordConfirm('');
         setMessage('');
@@ -272,6 +284,17 @@ export default function AppWrapper() {
           {isSignUp && (
             <form onSubmit={handleSignUp} className="space-y-4">
               <div>
+                <label className="block text-xs font-bold text-neutral-500 mb-1.5 ml-1">이름</label>
+                <input 
+                  type="text" 
+                  placeholder="홍길동" 
+                  value={name} 
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                />
+              </div>
+              <div>
                 <label className="block text-xs font-bold text-neutral-500 mb-1.5 ml-1">이메일</label>
                 <input 
                   type="email" 
@@ -345,7 +368,7 @@ function MeetingApp({ session }) {
   const [newGroupName, setNewGroupName] = useState('');
 
   const token = session.access_token;
-  const currentUserName = session.user.email.split('@')[0];
+  const currentUserName = session.user.user_metadata?.name || session.user.email.split('@')[0];
 
   const fetchData = useCallback(async () => {
     if (!token) {
@@ -614,7 +637,10 @@ function MeetingApp({ session }) {
       const res = await fetch(buildApiUrl('/api/groups'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ name: newGroupName.trim() })
+        body: JSON.stringify({ 
+          name: newGroupName.trim(),
+          admin_name: currentUserName
+        })
       });
       if (res.ok) {
         setNewGroupName('');
@@ -645,7 +671,7 @@ function MeetingApp({ session }) {
   let headerSubtitle = '';
   if (tab === 'minutes') {
     headerTitle = minutesView === 'list' ? '회의록' : (selectedMinuteDetail?.title ?? '회의록');
-    headerSubtitle = minutesView === 'list' ? `총 ${minutes.length}개` : (selectedMinuteDetail?.meetingDate ?? '');
+    headerSubtitle = minutesView === 'list' ? `총 ${minutes.length}개` : (selectedMinuteDetail?.meeting_date ?? '');
   } else if (tab === 'calendar') {
     headerTitle = '캘린더'; headerSubtitle = '이번 달 일정';
   } else if (tab === 'group') {
@@ -1166,6 +1192,7 @@ function GroupDetailView({ theme, group, token, onRefresh, onDeleteGroup, onMemb
         <div>
           <h2 className={`text-base font-bold ${theme.text}`}>{group.name}</h2>
           {group.created_at && <p className={`text-xs ${theme.subtext}`}>생성일: {new Date(group.created_at).toLocaleDateString()}</p>}
+          {group.admin_name && <p className={`text-xs ${theme.subtext}`}>관리자: {group.admin_name}</p>}
         </div>
         <button
           onClick={() => setShowAddModal(true)}
@@ -1187,7 +1214,7 @@ function GroupDetailView({ theme, group, token, onRefresh, onDeleteGroup, onMemb
           {members.map((m, index) => (
             <div key={getMemberKey(m) || `member-${index}`} className={`rounded-xl border ${theme.cardBorder} ${theme.cardBg} p-3 flex items-center justify-between`}>
               <div className="min-w-0">
-                <p className={`text-sm font-semibold ${theme.text}`}>{getMemberName(m) || '사용자'}</p>
+                <p className={`text-sm font-semibold ${theme.text}`}>{getMemberName(m) || '사용자'} {m.role === 'admin' ? '👑' : ''}</p>
                 <p className={`text-xs ${theme.subtext}`}>{m.position || (m.role === 'admin' ? '관리자' : '멤버')}</p>
               </div>
               <button
