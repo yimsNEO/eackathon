@@ -1089,10 +1089,10 @@ function MinutesDetailView({ theme, minute, token, isGenerating, onGenerateAI, o
             <div className="space-y-2">
               {minute.tasks?.map((t) => (
                 <div key={t.id} className={`w-full flex items-start gap-3 rounded-xl border ${theme.cardBorder} ${theme.cardBg} p-3 text-left`}>
-                  {t.status === 'done' ? <CheckCircle2 size={18} className="text-blue-500 mt-0.5 shrink-0" /> : <Circle size={18} className={`${theme.faint} mt-0.5 shrink-0`} />}
+                  {t.done ? <CheckCircle2 size={18} className="text-blue-500 mt-0.5 shrink-0" /> : <Circle size={18} className={`${theme.faint} mt-0.5 shrink-0`} />}
                   <div className="flex-1">
-                    <p className={`text-sm ${t.status === 'done' ? `line-through ${theme.faint}` : theme.text}`}>{t.title}</p>
-                    {t.due_date && <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{t.due_date}</span>}
+                    <p className={`text-sm ${t.done ? `line-through ${theme.faint}` : theme.text}`}>{t.text}</p>
+                    {t.assignee_name && <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{t.assignee_name}</span>}
                   </div>
                 </div>
               ))}
