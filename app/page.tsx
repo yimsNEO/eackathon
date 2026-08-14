@@ -1,6 +1,6 @@
-// @ts-nocheck
+﻿// @ts-nocheck
 "use client";
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../utils/supabase';
 import {
   FileText, Calendar, Users, CheckSquare, Settings, X, Mic,
@@ -12,6 +12,97 @@ const COLOR_PALETTE = ['bg-blue-600', 'bg-emerald-600', 'bg-amber-600', 'bg-rose
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 const buildApiUrl = (path) => `${API_BASE_URL}${path}`;
+
+function getGroupMembers(group) {
+  return group?.members || group?.group_members || [];
+}
+
+function getMemberCount(group) {
+  return group?.memberCount ?? group?.member_count ?? getGroupMembers(group).length ?? 0;
+}
+
+function getAddedMemberFromResponse(responseBody) {
+  if (!responseBody) return null;
+  if (responseBody.member) return responseBody.member;
+  if (responseBody.data?.member) return responseBody.data.member;
+  if (responseBody.id || responseBody.user_id || responseBody.email || responseBody.user_email) return responseBody;
+  return null;
+}
+
+function getMemberKey(member) {
+  return member?.user_id || member?.id || member?.email || member?.user_email;
+}
+
+function getMemberDeleteId(member) {
+  return member?.user_id || member?.user?.id || member?.id;
+}
+
+function getMemberEmail(member) {
+  return member?.users?.email || member?.user?.email || member?.email || member?.user_email;
+}
+
+function getMemberName(member) {
+  const email = getMemberEmail(member);
+  
+  // 직접 name 필드 우선 (멤버 추가 시 저장된 이름)
+  if (member?.name && member.name !== email) {
+    return member.name;
+  }
+  
+  // 그 다음 nested 구조
+  const name = member?.users?.name || member?.user?.name || member?.profile?.name || member?.user_name;
+  
+  return name && name !== email ? name : '';
+}
+
+function mergeMembersWithExistingNames(nextMembers, existingMembers) {
+  return nextMembers.map((member) => {
+    if (getMemberName(member)) return member;
+
+    const memberKey = getMemberKey(member);
+    const memberEmail = getMemberEmail(member);
+    const existingMember = existingMembers.find((existing) => {
+      const existingKey = getMemberKey(existing);
+      const existingEmail = getMemberEmail(existing);
+
+      return (memberKey && existingKey === memberKey) || (memberEmail && existingEmail === memberEmail);
+    });
+    const existingName = getMemberName(existingMember);
+
+    if (!existingName) return member;
+
+    return {
+      ...member,
+      name: existingName,
+      users: {
+        ...member.users,
+        name: member.users?.name && member.users.name !== getMemberEmail(member) ? member.users.name : existingName,
+      },
+    };
+  });
+}
+
+async function getApiErrorMessage(res) {
+  const text = await res.text().catch(() => '');
+  let message = text;
+
+  try {
+    const json = JSON.parse(text);
+    message = json.error?.message || json.message || json.error || text;
+  } catch {
+    // Some backend errors are plain text or empty responses.
+  }
+
+  return `${res.status} ${res.statusText}${message ? ` - ${message}` : ''}`;
+}
+
+function mergeGroupMembers(group, members) {
+  return {
+    ...group,
+    members,
+    memberCount: Math.max(getMemberCount(group), members.length),
+  };
+}
 
 const UPCOMING_MEETINGS = [
   { date: '8월 27일(목)', time: '19:00', title: '정기 임원진 회의', attend: '5/7명 참석 예정' },
@@ -256,7 +347,7 @@ function MeetingApp({ session }) {
   const token = session.access_token;
   const currentUserName = session.user.email.split('@')[0];
 
-  useEffect(() => {
+  const fetchData = useCallback(async () => {
     if (!token) {
       setGroups([]);
       setMinutes([]);
@@ -264,42 +355,72 @@ function MeetingApp({ session }) {
       return;
     }
 
-    let isMounted = true;
+    setLoadingData(true);
 
-    const fetchData = async () => {
-      setLoadingData(true);
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const [groupRes, minuteRes] = await Promise.all([
+        fetch(buildApiUrl('/api/groups'), { headers }),
+        fetch(buildApiUrl('/api/meetings'), { headers })
+      ]);
 
-      try {
-        const headers = { Authorization: `Bearer ${token}` };
-        const [groupRes, minuteRes] = await Promise.all([
-          fetch(buildApiUrl('/api/groups'), { headers }),
-          fetch(buildApiUrl('/api/meetings'), { headers })
-        ]);
-
-        if (!isMounted) return;
-
-        // 401: 토큰 만료 - 로그아웃 처리
-        if (groupRes.status === 401 || minuteRes.status === 401) {
-          console.warn('인증 토큰이 만료되었습니다. 다시 로그인하세요.');
-          await supabase.auth.signOut();
-          return;
-        }
-
-        if (groupRes.ok) setGroups(await groupRes.json());
-        if (minuteRes.ok) setMinutes(await minuteRes.json());
-      } catch (err) {
-        console.error('데이터 로딩 실패:', err);
-      } finally {
-        if (isMounted) setLoadingData(false);
+      // 401: 토큰 만료 - 로그아웃 처리
+      if (groupRes.status === 401 || minuteRes.status === 401) {
+        console.warn('인증 토큰이 만료되었습니다. 다시 로그인하세요.');
+        await supabase.auth.signOut();
+        return;
       }
-    };
 
-    fetchData();
+      if (groupRes.ok) {
+        const groupsFromList = await groupRes.json();
+        const nextGroups = await Promise.all(groupsFromList.map(async (group) => {
+          const detailRes = await fetch(buildApiUrl(`/api/groups/${group.id}`), { headers });
 
-    return () => {
-      isMounted = false;
-    };
+          if (detailRes.ok) {
+            const detailGroup = await detailRes.json();
+            const detailMembers = getGroupMembers(detailGroup);
+            if (detailMembers.length > 0) return mergeGroupMembers({ ...group, ...detailGroup }, detailMembers);
+          }
+
+          const membersRes = await fetch(buildApiUrl(`/api/groups/${group.id}/members`), { headers });
+
+          if (membersRes.ok) {
+            const members = await membersRes.json();
+            return mergeGroupMembers(group, Array.isArray(members) ? members : getGroupMembers(members));
+          }
+
+          return group;
+        }));
+
+        setGroups((prevGroups) => nextGroups.map((group) => {
+          const existingGroup = prevGroups.find((prevGroup) => prevGroup.id === group.id);
+          const nextMembers = getGroupMembers(group);
+          const existingMembers = getGroupMembers(existingGroup);
+
+          if (nextMembers.length > 0) {
+            return mergeGroupMembers(group, mergeMembersWithExistingNames(nextMembers, existingMembers));
+          }
+
+          if (existingMembers.length === 0) return group;
+
+          return {
+            ...group,
+            members: existingMembers,
+            memberCount: Math.max(getMemberCount(group), existingMembers.length),
+          };
+        }));
+      }
+      if (minuteRes.ok) setMinutes(await minuteRes.json());
+    } catch (err) {
+      console.error('데이터 로딩 실패:', err);
+    } finally {
+      setLoadingData(false);
+    }
   }, [token]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleLogout = async () => {
     setTab('minutes');
@@ -389,6 +510,43 @@ function MeetingApp({ session }) {
       }
     } catch (err) {
       console.error('회의록 삭제 실패:', err);
+    }
+  };
+
+  const deleteGroup = async (id) => {
+    if (!confirm('그룹을 삭제하시겠습니까? 그룹의 회의록과 멤버 정보도 함께 삭제될 수 있습니다.')) return;
+
+    try {
+      const requests = [
+        () => fetch(buildApiUrl(`/api/groups/${id}`), {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        () => fetch(buildApiUrl('/api/groups'), {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ id, groupId: id, group_id: id }),
+        }),
+      ];
+
+      let res = await requests[0]();
+
+      if ([400, 404, 405].includes(res.status)) {
+        res = await requests[1]();
+      }
+
+      if (res.ok) {
+        setGroups((prev) => prev.filter((group) => group.id !== id));
+        if (selectedGroupId === id) {
+          setSelectedGroupId(null);
+          setGroupView('list');
+        }
+        await fetchData();
+      } else {
+        alert('그룹 삭제 실패: ' + await getApiErrorMessage(res));
+      }
+    } catch (err) {
+      alert('네트워크 오류가 발생했습니다.');
     }
   };
 
@@ -543,10 +701,44 @@ function MeetingApp({ session }) {
               )}
               {tab === 'calendar' && <CalendarTab theme={theme} days={days} />}
               {tab === 'group' && groupView === 'list' && (
-                <GroupListView theme={theme} groups={groups} onSelect={(id) => { setSelectedGroupId(id); setGroupView('detail'); }} />
+                <GroupListView theme={theme} groups={groups} onSelect={(id) => { setSelectedGroupId(id); setGroupView('detail'); }} onDelete={deleteGroup} />
               )}
               {tab === 'group' && groupView === 'detail' && selectedGroup && (
-                <GroupDetailView key={selectedGroup.id} theme={theme} group={selectedGroup} token={token} />
+                <GroupDetailView
+                  key={selectedGroup.id}
+                  theme={theme}
+                  group={selectedGroup}
+                  token={token}
+                  onRefresh={fetchData}
+                  onDeleteGroup={deleteGroup}
+                  onMemberAdded={(member) => {
+                    setGroups((prev) => prev.map((g) => {
+                      if (g.id !== selectedGroup.id) return g;
+                      const members = getGroupMembers(g);
+                      const memberKey = getMemberKey(member);
+                      const exists = memberKey && members.some((existingMember) => getMemberKey(existingMember) === memberKey);
+                      const nextMembers = member && !exists ? [...members, member] : members;
+                      return {
+                        ...g,
+                        members: nextMembers,
+                        memberCount: Math.max(getMemberCount(g), nextMembers.length),
+                      };
+                    }));
+                  }}
+                  onMemberDeleted={(member) => {
+                    setGroups((prev) => prev.map((g) => {
+                      if (g.id !== selectedGroup.id) return g;
+                      const memberKey = getMemberKey(member);
+                      const members = getGroupMembers(g).filter((existingMember) => getMemberKey(existingMember) !== memberKey);
+
+                      return {
+                        ...g,
+                        members,
+                        memberCount: members.length,
+                      };
+                    }));
+                  }}
+                />
               )}
               {tab === 'todo' && <MyTodoView theme={theme} minutes={minutes} currentUser={currentUserName} onGoToMinute={goToMinute} />}
             </>
@@ -826,7 +1018,7 @@ function CalendarTab({ theme, days }) {
   );
 }
 
-function GroupListView({ theme, groups, onSelect }) {
+function GroupListView({ theme, groups, onSelect, onDelete }) {
   if (groups.length === 0) {
     return <div className={`text-center text-sm ${theme.subtext} pt-16`}>그룹이 없어요.<br />오른쪽 아래 버튼으로 추가해보세요.</div>;
   }
@@ -836,36 +1028,236 @@ function GroupListView({ theme, groups, onSelect }) {
         <div key={g.id} onClick={() => onSelect(g.id)} className={`rounded-xl border p-3 flex items-center justify-between cursor-pointer ${theme.cardBorder} ${theme.cardBg}`}>
           <div className="min-w-0">
             <p className={`text-sm font-semibold truncate ${theme.text}`}>{g.name}</p>
-            <p className={`text-xs ${theme.subtext}`}>멤버 {g.memberCount}명</p>
+            <p className={`text-xs ${theme.subtext}`}>멤버 {getMemberCount(g)}명</p>
           </div>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(g.id);
+            }}
+            className="p-2 text-neutral-400 shrink-0"
+            aria-label="그룹 삭제"
+          >
+            <Trash2 size={16} />
+          </button>
         </div>
       ))}
     </div>
   );
 }
 
-function GroupDetailView({ theme, group }) {
+function GroupDetailView({ theme, group, token, onRefresh, onDeleteGroup, onMemberAdded, onMemberDeleted }) {
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [position, setPosition] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [deletingMemberId, setDeletingMemberId] = useState(null);
+  const members = getGroupMembers(group);
+
+  const handleAddMember = async (e) => {
+    e.preventDefault();
+    if (!name.trim() || !email.trim() || !position.trim()) return;
+    setLoading(true);
+
+    try {
+      const res = await fetch(buildApiUrl(`/api/groups/${group.id}/members`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim().toLowerCase(),
+          position: position.trim(),
+        }),
+      });
+
+      if (res.ok) {
+        const responseBody = await res.json().catch(() => null);
+        const addedMemberFromResponse = getAddedMemberFromResponse(responseBody);
+        
+        // 추가된 멤버를 명확한 구조로 생성 (이름 필드 강조)
+        const addedMember = {
+          ...addedMemberFromResponse,
+          id: addedMemberFromResponse?.id || `pending-${email.trim().toLowerCase()}`,
+          user_id: addedMemberFromResponse?.user_id,
+          name: name.trim(), // 입력받은 이름 우선
+          email: email.trim().toLowerCase(),
+          position: position.trim(),
+          users: {
+            name: name.trim(),
+            email: email.trim().toLowerCase(),
+          },
+        };
+        
+        setShowAddModal(false);
+        setName('');
+        setEmail('');
+        setPosition('');
+        if (onMemberAdded) onMemberAdded(addedMember);
+        if (onRefresh) await onRefresh();
+      } else {
+        const err = await res.json();
+        alert('추가 실패: ' + (err.error?.message || '오류가 발생했습니다.'));
+      }
+    } catch (err) {
+      alert('네트워크 오류가 발생했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteMember = async (member) => {
+    const memberId = getMemberDeleteId(member);
+
+    if (!memberId) {
+      alert('삭제할 멤버 정보를 찾을 수 없습니다.');
+      return;
+    }
+
+    if (!confirm('이 멤버를 그룹에서 삭제하시겠습니까?')) return;
+
+    setDeletingMemberId(memberId);
+
+    try {
+      const memberEmail = getMemberEmail(member);
+      const requests = [
+        () => fetch(buildApiUrl(`/api/groups/${group.id}/members/${memberId}`), {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        () => fetch(buildApiUrl(`/api/groups/${group.id}/members`), {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            userId: memberId,
+            user_id: memberId,
+            memberId: member.id,
+            member_id: member.id,
+            email: memberEmail,
+          }),
+        }),
+      ];
+
+      let res = await requests[0]();
+
+      if ([400, 404, 405].includes(res.status)) {
+        res = await requests[1]();
+      }
+
+      if (res.ok) {
+        if (onMemberDeleted) onMemberDeleted(member);
+        if (onRefresh) await onRefresh();
+      } else {
+        alert('멤버 삭제 실패: ' + await getApiErrorMessage(res));
+      }
+    } catch (err) {
+      alert('네트워크 오류가 발생했습니다.');
+    } finally {
+      setDeletingMemberId(null);
+    }
+  };
+
   return (
     <div className="space-y-4 pb-4">
-      <h2 className={`text-base font-bold ${theme.text}`}>{group.name}</h2>
-      {group.created_at && <p className={`text-xs ${theme.subtext}`}>생성일: {new Date(group.created_at).toLocaleDateString()}</p>}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className={`text-base font-bold ${theme.text}`}>{group.name}</h2>
+          {group.created_at && <p className={`text-xs ${theme.subtext}`}>생성일: {new Date(group.created_at).toLocaleDateString()}</p>}
+        </div>
+        <button
+          onClick={() => setShowAddModal(true)}
+          className="shrink-0 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white"
+        >
+          멤버 추가
+        </button>
+      </div>
+      <button
+        onClick={() => onDeleteGroup(group.id)}
+        className="w-full rounded-xl border border-rose-200 px-3 py-2.5 text-sm font-semibold text-rose-500"
+      >
+        그룹 삭제
+      </button>
       
       <div>
-        <p className={`text-sm font-bold ${theme.text} mb-2 flex items-center gap-1.5`}><Users size={15} /> 멤버 ({group.members?.length || 0}명)</p>
+        <p className={`text-sm font-bold ${theme.text} mb-2 flex items-center gap-1.5`}><Users size={15} /> 멤버 ({members.length}명)</p>
         <div className="space-y-2">
-          {group.members?.map((m) => (
-            <div key={m.id} className={`rounded-xl border ${theme.cardBorder} ${theme.cardBg} p-3 flex items-center justify-between`}>
+          {members.map((m, index) => (
+            <div key={getMemberKey(m) || `member-${index}`} className={`rounded-xl border ${theme.cardBorder} ${theme.cardBg} p-3 flex items-center justify-between`}>
               <div className="min-w-0">
-                <p className={`text-sm font-semibold ${theme.text}`}>{m.users?.name || m.user_email || '사용자'}</p>
-                <p className={`text-xs ${theme.subtext}`}>{m.role === 'admin' ? '관리자' : '멤버'}</p>
+                <p className={`text-sm font-semibold ${theme.text}`}>{getMemberName(m) || '사용자'}</p>
+                <p className={`text-xs ${theme.subtext}`}>{m.position || (m.role === 'admin' ? '관리자' : '멤버')}</p>
               </div>
+              <button
+                onClick={() => handleDeleteMember(m)}
+                disabled={deletingMemberId === getMemberDeleteId(m)}
+                className="p-2 text-neutral-400 shrink-0 disabled:opacity-40"
+                aria-label="멤버 삭제"
+              >
+                <Trash2 size={15} />
+              </button>
             </div>
           ))}
-          {(!group.members || group.members.length === 0) && (
+          {members.length === 0 && (
             <div className={`text-sm ${theme.subtext} text-center py-4`}>멤버가 없습니다.</div>
           )}
         </div>
       </div>
+
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 px-4">
+          <div className={`w-full max-w-md rounded-t-3xl p-5 ${theme.cardBg} border ${theme.cardBorder}`}>
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className={`text-base font-bold ${theme.text}`}>멤버 추가</h3>
+              <button onClick={() => setShowAddModal(false)} className={theme.subtext}>닫기</button>
+            </div>
+            <form onSubmit={handleAddMember} className="space-y-3">
+              <input
+                type="text"
+                placeholder="이름"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className={`w-full rounded-xl border p-3 text-sm bg-transparent outline-none ${theme.inputBorder} ${theme.text}`}
+                required
+              />
+              <input
+                type="email"
+                placeholder="이메일"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className={`w-full rounded-xl border p-3 text-sm bg-transparent outline-none ${theme.inputBorder} ${theme.text}`}
+                required
+              />
+              <input
+                type="text"
+                placeholder="직책"
+                value={position}
+                onChange={(e) => setPosition(e.target.value)}
+                className={`w-full rounded-xl border p-3 text-sm bg-transparent outline-none ${theme.inputBorder} ${theme.text}`}
+                required
+              />
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="flex-1 rounded-xl border border-neutral-300 px-4 py-2.5 text-sm font-semibold text-neutral-500"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading || !name.trim() || !email.trim() || !position.trim()}
+                  className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-white ${loading || !name.trim() || !email.trim() || !position.trim() ? 'bg-blue-400' : 'bg-blue-600'}`}
+                >
+                  {loading ? '추가 중...' : '추가'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
