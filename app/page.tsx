@@ -10,6 +10,8 @@ import {
 
 const COLOR_PALETTE = ['bg-blue-600', 'bg-emerald-600', 'bg-amber-600', 'bg-rose-600', 'bg-violet-600', 'bg-cyan-600', 'bg-orange-600', 'bg-teal-600'];
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
+const buildApiUrl = (path) => `${API_BASE_URL}${path}`;
 
 const UPCOMING_MEETINGS = [
   { date: '8월 27일(목)', time: '19:00', title: '정기 임원진 회의', attend: '5/7명 참석 예정' },
@@ -30,7 +32,10 @@ export default function AppWrapper() {
   const [session, setSession] = useState(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
   const [loading, setLoading] = useState(true);
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [message, setMessage] = useState('');
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -47,8 +52,42 @@ export default function AppWrapper() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setMessage('');
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) alert('로그인 실패: ' + error.message);
+    if (error) setMessage('로그인 실패: ' + error.message);
+  };
+
+  const handleSignUp = async (e) => {
+    e.preventDefault();
+    setMessage('');
+    
+    if (password !== passwordConfirm) {
+      setMessage('비밀번호가 일치하지 않습니다.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setMessage('비밀번호는 최소 6자 이상이어야 합니다.');
+      return;
+    }
+
+    const { error } = await supabase.auth.signUp({ 
+      email, 
+      password 
+    });
+    
+    if (error) {
+      setMessage('회원가입 실패: ' + error.message);
+    } else {
+      setMessage('회원가입 성공! 이메일을 확인하거나 로그인하세요.');
+      setTimeout(() => {
+        setIsSignUp(false);
+        setEmail('');
+        setPassword('');
+        setPasswordConfirm('');
+        setMessage('');
+      }, 2000);
+    }
   };
 
   if (loading) {
@@ -62,41 +101,126 @@ export default function AppWrapper() {
   if (!session) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-neutral-100" style={{ fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-        <div className="relative overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-2xl flex flex-col justify-center px-8" style={{ width: 380, height: 760 }}>
+        <div className="relative overflow-hidden rounded-3xl border border-neutral-200 bg-white shadow-2xl flex flex-col justify-center px-8" style={{ width: 380, height: 'auto', minHeight: 600 }}>
           
-          <div className="mb-10 text-center">
+          <div className="mb-8 text-center">
             <div className="w-16 h-16 bg-blue-600 rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-lg shadow-blue-200">
               <Users size={32} className="text-white" />
             </div>
             <h1 className="text-2xl font-extrabold text-neutral-900">임원진 회의록</h1>
-            <p className="text-sm text-neutral-500 mt-2">로그인하여 회의 내용과 할 일을 확인하세요.</p>
+            <p className="text-sm text-neutral-500 mt-2">회의 내용과 할 일을 확인하세요.</p>
           </div>
 
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-neutral-500 mb-1.5 ml-1">이메일</label>
-              <input 
-                type="email" 
-                placeholder="test1@gmail.com" 
-                value={email} 
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-neutral-500 mb-1.5 ml-1">비밀번호</label>
-              <input 
-                type="password" 
-                placeholder="••••••••" 
-                value={password} 
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
-              />
-            </div>
-            <button type="submit" className="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold mt-2 shadow-lg shadow-blue-200 active:scale-[0.98] transition-transform">
-              시작하기
+          {/* 탭 버튼 */}
+          <div className="flex gap-2 mb-6 bg-neutral-100 p-1 rounded-xl">
+            <button
+              onClick={() => { setIsSignUp(false); setMessage(''); }}
+              className={`flex-1 py-3 rounded-lg font-bold text-sm transition ${
+                !isSignUp 
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' 
+                  : 'bg-transparent text-neutral-600 hover:text-neutral-900'
+              }`}
+            >
+              로그인
             </button>
-          </form>
+            <button
+              onClick={() => { setIsSignUp(true); setMessage(''); }}
+              className={`flex-1 py-3 rounded-lg font-bold text-sm transition ${
+                isSignUp 
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' 
+                  : 'bg-transparent text-neutral-600 hover:text-neutral-900'
+              }`}
+            >
+              회원가입
+            </button>
+          </div>
+
+          {/* 메시지 표시 */}
+          {message && (
+            <div className={`p-3 rounded-lg text-sm mb-4 text-center ${
+              message.includes('성공') 
+                ? 'bg-emerald-100 text-emerald-700' 
+                : 'bg-rose-100 text-rose-700'
+            }`}>
+              {message}
+            </div>
+          )}
+
+          {/* 로그인 폼 */}
+          {!isSignUp && (
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-neutral-500 mb-1.5 ml-1">이메일</label>
+                <input 
+                  type="email" 
+                  placeholder="test1@gmail.com" 
+                  value={email} 
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-neutral-500 mb-1.5 ml-1">비밀번호</label>
+                <input 
+                  type="password" 
+                  placeholder="••••••••" 
+                  value={password} 
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                />
+              </div>
+              <button type="submit" className="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold mt-2 shadow-lg shadow-blue-200 active:scale-[0.98] transition-transform hover:bg-blue-700">
+                로그인
+              </button>
+            </form>
+          )}
+
+          {/* 회원가입 폼 */}
+          {isSignUp && (
+            <form onSubmit={handleSignUp} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-neutral-500 mb-1.5 ml-1">이메일</label>
+                <input 
+                  type="email" 
+                  placeholder="example@gmail.com" 
+                  value={email} 
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-neutral-500 mb-1.5 ml-1">비밀번호</label>
+                <input 
+                  type="password" 
+                  placeholder="••••••••" 
+                  value={password} 
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength="6"
+                  className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                />
+                <p className="text-xs text-neutral-400 mt-1 ml-1">최소 6자 이상</p>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-neutral-500 mb-1.5 ml-1">비밀번호 확인</label>
+                <input 
+                  type="password" 
+                  placeholder="••••••••" 
+                  value={passwordConfirm} 
+                  onChange={(e) => setPasswordConfirm(e.target.value)}
+                  required
+                  minLength="6"
+                  className="w-full p-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                />
+              </div>
+              <button type="submit" className="w-full bg-blue-600 text-white p-4 rounded-2xl font-bold mt-2 shadow-lg shadow-blue-200 active:scale-[0.98] transition-transform hover:bg-blue-700">
+                회원가입
+              </button>
+            </form>
+          )}
           
         </div>
       </div>
@@ -131,28 +255,70 @@ function MeetingApp({ session }) {
   const token = session.access_token;
   const currentUserName = session.user.email.split('@')[0];
 
-  const fetchData = async () => {
-    try {
-      const headers = { Authorization: `Bearer ${token}` };
-      const [groupRes, minuteRes] = await Promise.all([
-        fetch('/api/groups', { headers }),
-        fetch('/api/meetings', { headers })
-      ]);
-
-      if (groupRes.ok) setGroups(await groupRes.json());
-      if (minuteRes.ok) setMinutes(await minuteRes.json());
-    } catch (err) {
-      console.error('데이터 로딩 실패:', err);
-    } finally {
+  useEffect(() => {
+    if (!token) {
+      setGroups([]);
+      setMinutes([]);
       setLoadingData(false);
+      return;
     }
-  };
 
-  useEffect(() => { fetchData(); }, []);
+    let isMounted = true;
+
+    const fetchData = async () => {
+      setLoadingData(true);
+
+      try {
+        const headers = { Authorization: `Bearer ${token}` };
+        const [groupRes, minuteRes] = await Promise.all([
+          fetch(buildApiUrl('/api/groups'), { headers }),
+          fetch(buildApiUrl('/api/meetings'), { headers })
+        ]);
+
+        if (!isMounted) return;
+
+        // 401: 토큰 만료 - 로그아웃 처리
+        if (groupRes.status === 401 || minuteRes.status === 401) {
+          console.warn('인증 토큰이 만료되었습니다. 다시 로그인하세요.');
+          await supabase.auth.signOut();
+          return;
+        }
+
+        if (groupRes.ok) setGroups(await groupRes.json());
+        if (minuteRes.ok) setMinutes(await minuteRes.json());
+      } catch (err) {
+        console.error('데이터 로딩 실패:', err);
+      } finally {
+        if (isMounted) setLoadingData(false);
+      }
+    };
+
+    fetchData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [token]);
+
+  const handleLogout = async () => {
+    setTab('minutes');
+    setShowSettings(false);
+    setGroups([]);
+    setMinutes([]);
+    setLoadingData(false);
+    setMinutesView('list');
+    setSelectedMinuteId(null);
+    setSelectedMinuteDetail(null);
+    setGroupView('list');
+    setSelectedGroupId(null);
+    setShowGroupModal(false);
+    setNewGroupName('');
+    await supabase.auth.signOut();
+  };
 
   const fetchMinuteDetail = async (id) => {
     try {
-      const res = await fetch(`/api/meetings/${id}`, {
+      const res = await fetch(buildApiUrl(`/api/meetings/${id}`), {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) setSelectedMinuteDetail(await res.json());
@@ -188,13 +354,13 @@ function MeetingApp({ session }) {
       return;
     }
     try {
-      const res = await fetch('/api/meetings', {
+      const res = await fetch(buildApiUrl('/api/meetings'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          groupId: groups[0].id,
+          group_id: groups[0].id,
           title: '새 회의록',
-          meetingDate: new Date().toISOString().split('T')[0]
+          meeting_date: new Date().toISOString().split('T')[0]
         })
       });
       if (res.ok) {
@@ -212,7 +378,7 @@ function MeetingApp({ session }) {
   const deleteMinute = async (id) => {
     if (!confirm('정말 삭제하시겠습니까?')) return;
     try {
-      const res = await fetch(`/api/meetings/${id}`, {
+      const res = await fetch(buildApiUrl(`/api/meetings/${id}`), {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -227,16 +393,38 @@ function MeetingApp({ session }) {
 
   const handleGenerateAI = async (minuteId, rawContent) => {
     try {
-      await fetch(`/api/meetings/${minuteId}`, {
+      const patchRes = await fetch(buildApiUrl(`/api/meetings/${minuteId}`), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ rawContent })
+        body: JSON.stringify({ raw_content: rawContent })
       });
 
-      const res = await fetch(`/api/meetings/${minuteId}/generate`, {
+      if (patchRes.status === 401) {
+        alert('인증 토큰이 만료되었습니다. 다시 로그인하세요.');
+        await supabase.auth.signOut();
+        return;
+      }
+
+      if (patchRes.status === 403) {
+        alert('이 회의록을 수정할 권한이 없습니다.');
+        return;
+      }
+
+      const res = await fetch(buildApiUrl(`/api/meetings/${minuteId}/generate`), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
+
+      if (res.status === 401) {
+        alert('인증 토큰이 만료되었습니다. 다시 로그인하세요.');
+        await supabase.auth.signOut();
+        return;
+      }
+
+      if (res.status === 403) {
+        alert('이 회의록의 요약을 생성할 권한이 없습니다.');
+        return;
+      }
 
       if (res.ok) {
         alert('AI 요약이 성공적으로 완료되었습니다!');
@@ -257,7 +445,7 @@ function MeetingApp({ session }) {
     e.preventDefault();
     if (!newGroupName.trim()) return;
     try {
-      const res = await fetch('/api/groups', {
+      const res = await fetch(buildApiUrl('/api/groups'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ name: newGroupName.trim() })
@@ -432,7 +620,7 @@ function MeetingApp({ session }) {
                   <span className="w-5 h-5 rounded-full bg-white block" />
                 </button>
               </div>
-              <button onClick={() => supabase.auth.signOut()} className="flex items-center gap-3 py-4 text-rose-500 w-full hover:bg-rose-50 rounded-xl px-2 transition">
+              <button onClick={handleLogout} className="flex items-center gap-3 py-4 text-rose-500 w-full hover:bg-rose-50 rounded-xl px-2 transition">
                 <LogOut size={18} /><span className="font-medium">로그아웃</span>
               </button>
             </div>
@@ -528,10 +716,10 @@ function MinutesDetailView({ theme, minute, token, onGenerateAI, onRefresh }) {
                 />
                 <button
                   onClick={async () => {
-                    await fetch(`/api/meetings/${minute.id}`, {
+                    await fetch(buildApiUrl(`/api/meetings/${minute.id}`), {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                      body: JSON.stringify({ rawContent: content })
+                      body: JSON.stringify({ raw_content: content })
                     });
                     setEditingContent(false);
                     onRefresh();
