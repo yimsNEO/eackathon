@@ -38,8 +38,8 @@
   ```json
   {
     "groupId": "g1",
-    "attendees": ["김도윤", "이서연"],
-    "content": "홍보 포스터 시안은 정하은이 만들고 최민서 컨펌받아."
+    "attendees": ["이명세", "서재욱"],
+    "content": "홍보 포스터 시안은 배진용이 만들고 최민서 컨펌받아."
   }
   ```
 * **Response (200 OK):**
@@ -52,7 +52,7 @@
         { "text": "홍보 포스터 시안 최종 컨펌", "people": ["최민서"] }
       ],
       "todos": [
-        { "text": "홍보 포스터 시안 제작", "assignee": "정하은" }
+        { "text": "홍보 포스터 시안 제작", "assignee": "배진용" }
       ]
     }
   }
@@ -73,7 +73,7 @@
   * **Request Body:** `{"title": "새 회의록", "date": "2026-08-14", "groupId": "g1"}`
   * **Response:** `{"status": "success", "data": {"id": "m2"}}`
 * **`PUT /api/minutes/:id`** (수정)
-  * **Request Body:** `{"content": "수정된 회의 내용...", "attendees": ["최민서", "한유진"]}`
+  * **Request Body:** `{"content": "수정된 회의 내용...", "attendees": ["최민서", "배진용"]}`
   * **Response:** `{"status": "success"}`
 
 #### 🟢 그룹 (Groups) 관련 API 상세
@@ -83,7 +83,7 @@
     {
       "status": "success",
       "data": [
-        { "id": "g1", "name": "임원진", "members": [{ "id": "p1", "name": "김도윤", "role": "회장", "color": "bg-blue-600" }] }
+        { "id": "g1", "name": "임원진", "members": [{ "id": "p1", "name": "배진용", "role": "회장", "color": "bg-blue-600" }] }
       ]
     }
     ```
