@@ -390,6 +390,12 @@ function MeetingApp({ session }) {
   // 그룹 생성 모달 상태
   const [showGroupModal, setShowGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  
+  // 회의록 생성 모달 상태
+  const [showMinuteModal, setShowMinuteModal] = useState(false);
+  const [selectedGroupIdForMinute, setSelectedGroupIdForMinute] = useState('');
+  const [minuteTitle, setMinuteTitle] = useState('');
+  const [minuteDate, setMinuteDate] = useState(new Date().toISOString().split('T')[0]);
 
   const token = session.access_token;
   const currentUserName = session.user.user_metadata?.name || session.user.email.split('@')[0];
@@ -516,20 +522,30 @@ function MeetingApp({ session }) {
         iconBtn: 'bg-white border-neutral-200 text-neutral-500',
       };
 
-  const addMinute = async () => {
+  const addMinute = () => {
     if (groups.length === 0) {
       alert('먼저 그룹을 생성해주세요!');
       setTab('group');
       return;
     }
+    setShowMinuteModal(true);
+    setSelectedGroupIdForMinute(groups[0]?.id || '');
+    setMinuteTitle('');
+    setMinuteDate(new Date().toISOString().split('T')[0]);
+  };
+
+  const handleCreateMinuteSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedGroupIdForMinute || !minuteTitle.trim() || !minuteDate.trim()) return;
+
     try {
       const res = await fetch(buildApiUrl('/api/meetings'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          group_id: groups[0].id,
-          title: '새 회의록',
-          meeting_date: new Date().toISOString().split('T')[0]
+          group_id: selectedGroupIdForMinute,
+          title: minuteTitle.trim(),
+          meeting_date: minuteDate
         })
       });
       if (res.ok) {
@@ -537,9 +553,16 @@ function MeetingApp({ session }) {
         setMinutes(prev => [newM, ...prev]);
         setSelectedMinuteId(newM.id);
         setMinutesView('detail');
-        fetchData();
+        setShowMinuteModal(false);
+        setMinuteTitle('');
+        setMinuteDate(new Date().toISOString().split('T')[0]);
+        await fetchData();
+      } else {
+        const err = await res.json();
+        alert('회의록 생성 실패: ' + (err.error?.message || '오류가 발생했습니다.'));
       }
     } catch (err) {
+      alert('네트워크 오류가 발생했습니다.');
       console.error('회의록 생성 실패:', err);
     }
   };
@@ -805,6 +828,62 @@ function MeetingApp({ session }) {
             <Plus size={18} />
             <span className="text-sm font-semibold">{tab === 'minutes' ? '회의록 추가' : '그룹 추가'}</span>
           </button>
+        )}
+
+        {/* 회의록 생성 모달 */}
+        {showMinuteModal && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+            <div className={`w-full max-w-xs rounded-2xl border ${theme.cardBorder} ${theme.cardBg} p-5 shadow-2xl`}>
+              <h3 className={`text-base font-bold ${theme.text} mb-3`}>새 회의록 추가</h3>
+              <form onSubmit={handleCreateMinuteSubmit} className="space-y-3">
+                <div>
+                  <label className={`block text-xs font-semibold ${theme.subtext} mb-1.5`}>그룹 선택</label>
+                  <select
+                    value={selectedGroupIdForMinute}
+                    onChange={(e) => setSelectedGroupIdForMinute(e.target.value)}
+                    className={`w-full p-3 rounded-xl border text-sm ${theme.inputBorder} ${theme.text} bg-transparent outline-none`}
+                    required
+                  >
+                    <option value="">그룹을 선택하세요</option>
+                    {groups.map((g) => (
+                      <option key={g.id} value={g.id}>{g.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <input
+                  type="text"
+                  placeholder="회의록 제목"
+                  value={minuteTitle}
+                  onChange={(e) => setMinuteTitle(e.target.value)}
+                  className={`w-full p-3 rounded-xl border text-sm ${theme.inputBorder} ${theme.text} bg-transparent outline-none`}
+                  required
+                />
+                <input
+                  type="date"
+                  value={minuteDate}
+                  onChange={(e) => setMinuteDate(e.target.value)}
+                  className={`w-full p-3 rounded-xl border text-sm ${theme.inputBorder} ${theme.text} bg-transparent outline-none`}
+                  required
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowMinuteModal(false)}
+                    className="flex-1 py-2.5 rounded-xl border border-neutral-300 text-neutral-500 text-sm font-semibold"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!selectedGroupIdForMinute || !minuteTitle.trim() || !minuteDate.trim()}
+                    className="flex-1 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold shadow disabled:bg-blue-400"
+                  >
+                    생성
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
         )}
 
         {/* 그룹 생성 모달 (prompt 오류 원천 차단) */}
