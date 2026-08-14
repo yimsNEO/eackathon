@@ -245,12 +245,112 @@ router.post('/api/groups', async (req, res) => {
 
 ---
 
-### Phase 3: GET /api/groups 수정 (선택사항)
+### Phase 2-1: 멤버 추가 API 구현 (✨ 새로 추가됨)
 
-그룹 목록 조회 시에도 `admin_name` 필드 포함:
+#### ✨ 새로운 요청 형식 (이름 필드 제거!)
+```json
+{
+  "email": "park@gmail.com",
+  "position": "부회장"
+}
+```
+
+#### 📊 응답 형식
+```json
+{
+  "id": "uuid",
+  "user_id": "uuid",
+  "email": "park@gmail.com",
+  "name": "박준영",  // ← 백엔드에서 users 테이블에서 조회해서 반환
+  "position": "부회장",
+  "users": { "name": "박준영", "email": "park@gmail.com" }
+}
+```
+
+#### 💻 구현 코드 예시 (Node.js + Express)
 
 ```javascript
-// GET /api/groups
+// POST /api/groups/:groupId/members (멤버 추가 - 이메일로 사용자 조회)
+router.post('/api/groups/:groupId/members', async (req, res) => {
+  try {
+    // 1. 인증 검증
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: { message: '토큰이 없습니다' } });
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !user) return res.status(401).json({ error: { message: '인증 실패' } });
+
+    // 2. 권한 검증: 그룹 생성자만 멤버 추가 가능
+    const { groupId } = req.params;
+    const { data: group } = await supabase
+      .from('groups')
+      .select('created_by')
+      .eq('id', groupId)
+      .single();
+
+    if (!group || group.created_by !== user.id) {
+      return res.status(403).json({ error: { message: '그룹 관리 권한이 없습니다' } });
+    }
+
+    // 3. 요청 데이터 추출
+    const { email, position } = req.body;
+    
+    if (!email?.trim() || !position?.trim()) {
+      return res.status(400).json({ error: { message: '이메일과 직책은 필수입니다' } });
+    }
+
+    // 4. ✨ users 테이블에서 사용자 정보 조회 (이메일로 찾기)
+    const { data: targetUser, error: userError } = await supabase
+      .from('users')
+      .select('id, name, email')
+      .eq('email', email.trim().toLowerCase())
+      .single();
+
+    if (userError || !targetUser) {
+      return res.status(404).json({ error: { message: '해당 이메일의 사용자가 없습니다. 먼저 회원가입을 해야 합니다.' } });
+    }
+
+    // 5. group_members에 멤버 추가
+    const { data: member, error: memberError } = await supabase
+      .from('group_members')
+      .insert({
+        group_id: groupId,
+        user_id: targetUser.id,
+        role: 'member',
+        name: targetUser.name,  // ← users 테이블에서 조회한 이름 사용
+        position: position.trim()
+      })
+      .select('*, users(name, email)')
+      .single();
+
+    if (memberError) {
+      return res.status(500).json({ error: { message: '멤버 추가 실패' } });
+    }
+
+    return res.status(201).json({
+      id: member.id,
+      user_id: member.user_id,
+      email: targetUser.email,
+      name: targetUser.name,
+      position: member.position,
+      users: { name: targetUser.name, email: targetUser.email }
+    });
+
+  } catch (err) {
+    console.error('멤버 추가 에러:', err);
+    return res.status(500).json({ error: { message: '서버 오류' } });
+  }
+});
+```
+
+---
+
+### Phase 3: GET /api/groups 수정 (⭐ 중요: 멤버인 그룹 포함!)
+
+그룹 목록 조회 시 **사용자가 생성한 그룹 + 멤버로 추가된 그룹** 모두 반환:
+
+```javascript
+// GET /api/groups (⭐ 사용자가 속한 모든 그룹 반환!)
 router.get('/api/groups', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
@@ -259,22 +359,36 @@ router.get('/api/groups', async (req, res) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) return res.status(401).json({ error: { message: '인증 실패' } });
 
-    // ✨ admin_name 필드 포함
+    // ✨ 사용자가 멤버인 모든 그룹 조회 (생성자 포함)
+    // 중요: group_members에 사용자가 있으면 반환되어야 함!
     const { data: groups, error } = await supabase
       .from('groups')
-      .select('id, name, admin_name, admin_email, created_at, member_count')
+      .select('id, name, admin_name, admin_email, created_at')
       .in('id', (
         await supabase
           .from('group_members')
           .select('group_id')
           .eq('user_id', user.id)
-      ).data.map(m => m.group_id));
+      ).data?.map(m => m.group_id) || []);
 
     if (error) {
+      console.error('그룹 조회 에러:', error);
       return res.status(500).json({ error: { message: '조회 실패' } });
     }
 
-    return res.status(200).json(groups || []);
+    // ⭐ 각 그룹의 멤버 수 계산
+    const groupsWithMemberCount = await Promise.all(
+      (groups || []).map(async (group) => {
+        const { count } = await supabase
+          .from('group_members')
+          .select('*', { count: 'exact' })
+          .eq('group_id', group.id);
+        
+        return { ...group, member_count: count || 0 };
+      })
+    );
+
+    return res.status(200).json(groupsWithMemberCount || []);
 
   } catch (err) {
     console.error('그룹 조회 에러:', err);
@@ -282,6 +396,11 @@ router.get('/api/groups', async (req, res) => {
   }
 });
 ```
+
+**⚠️ 주의사항:**
+- group_members 테이블에 사용자가 멤버로 등록되어야만 그룹이 조회됨
+- 멤버 추가 시 반드시 group_members에 레코드 생성해야 함
+- "멤버가 0명"으로 표시되는 문제는 group_members 조회 실패일 가능성 높음
 
 ---
 
@@ -326,14 +445,17 @@ $$;
 1. ✅ **프론트**: 회원가입 폼에 이름 필드 추가 - **완료**
 2. ✅ **프론트**: 그룹 생성 시 admin_name 전송 - **완료**
 3. ✅ **프론트**: 회원가입 후 POST /api/users 호출 - **완료**
-4. ⏳ **DB**: users 테이블 생성 (이메일, 이름 저장)
-5. ⏳ **API**: POST /api/users 엔드포인트 구현
-6. ⏳ **DB**: groups 테이블에 admin_name, admin_email 컬럼 추가
-7. ⏳ **API**: POST /api/groups에서 admin_name 받기 및 저장
-8. ⏳ **API**: 그룹 생성 시 admin을 group_members에 자동 추가
-9. ⏳ **API**: GET /api/groups에 admin_name 필드 포함
-10. ⏳ **테스트**: 회원가입 후 users 테이블에 저장 확인
-11. ⏳ **테스트**: 그룹 생성 후 admin_name 확인
+4. ✅ **프론트**: 멤버 추가 시 이름 필드 제거, 이메일+직책만 입력 - **완료** ⭐ NEW
+5. ⏳ **DB**: users 테이블 생성 (이메일, 이름 저장)
+6. ⏳ **API**: POST /api/users 엔드포인트 구현
+7. ⏳ **DB**: groups 테이블에 admin_name, admin_email 컬럼 추가
+8. ⏳ **API**: POST /api/groups에서 admin_name 받기 및 저장
+9. ⏳ **API**: 그룹 생성 시 admin을 group_members에 자동 추가
+10. ⏳ **API**: POST /api/groups/:id/members 구현 (이메일로 사용자 조회) ⭐ NEW
+11. ⏳ **API**: GET /api/groups 수정 (멤버인 그룹 모두 반환) ⭐ IMPORTANT
+12. ⏳ **테스트**: 회원가입 후 users 테이블에 저장 확인
+13. ⏳ **테스트**: 멤버 추가 후 group_members에 저장 확인 ⭐ NEW
+14. ⏳ **테스트**: 멤버로 추가된 사용자 로그인 시 그룹 보이는지 확인 ⭐ NEW
 
 ---
 
@@ -369,11 +491,18 @@ WHERE admin_name IS NULL;
 - [ ] groups 테이블에 admin_name, admin_email 컬럼 추가
 - [ ] POST /api/groups에서 admin_name 받아서 저장
 - [ ] 그룹 생성 시 admin을 group_members에 자동 추가 (role='admin')
+- [ ] ⭐ POST /api/groups/:id/members 구현 (이메일로 users 테이블 조회)
+- [ ] ⭐ POST /api/groups/:id/members에서 멤버 추가 후 group_members 저장
+- [ ] ⭐ GET /api/groups에서 사용자가 멤버인 모든 그룹 반환
+- [ ] ⭐ 멤버 추가 후 멤버 수(member_count) 제대로 계산되는지 확인
 - [ ] GET /api/groups 응답에 admin_name 포함
 - [ ] GET /api/groups/:id 응답에 admin_name 포함
 - [ ] 로컬 테스트: 회원가입 후 users 테이블 확인
 - [ ] 로컬 테스트: 그룹 생성 후 목록에서 admin 이름 확인
 - [ ] 로컬 테스트: 그룹 상세 페이지에서 admin 표시 확인 (👑)
+- [ ] ⭐ 로컬 테스트: 멤버 추가 후 그룹 멤버 목록에서 이메일과 직책만 표시 확인
+- [ ] ⭐ 로컬 테스트: 멤버로 추가된 사용자 로그인 후 그룹이 보이는지 확인
+- [ ] ⭐ 로컬 테스트: 멤버로 추가된 사용자 로그인 후 그룹 멤버 수가 0이 아닌지 확인
 
 ---
 
@@ -415,17 +544,50 @@ npm run dev  # localhost:3000
 - 멤버 목록에서 "테스트사용자 👑 / 관리자" 표시 확인
 - 그룹 정보에 "관리자: 테스트사용자" 표시 확인
 
+### 6단계: 멤버 추가 테스트 ⭐ (새로 추가)
+**계정 1 (관리자: 서재욱) 에서:**
+- 그룹 상세 페이지에서 "멤버 추가" 클릭
+- 이메일: "park@example.com" (새 계정이 필요함)
+- 직책: "부회장"
+- **확인**: group_members 테이블에 저장됨
+  ```sql
+  SELECT * FROM group_members WHERE email = 'park@example.com';
+  -- email, position: 부회장, name: (users 테이블에서 조회)
+  ```
+
+### 7단계: 멤버 계정으로 로그인 테스트 ⭐ (중요!)
+**계정 2 (멤버: 박준영) 에서:**
+1. 로그인: "park@example.com" / "password"
+2. **확인 사항**:
+   - [ ] 대시보드에서 "테스트그룹"이 보이는가? (멤버가 0명이 아닌가?)
+   - [ ] 그룹 멤버 목록에서 "서재욱 👑 / 관리자"가 보이는가?
+   - [ ] 그룹 멤버 목록에서 "박준영 / 부회장"이 보이는가?
+3. **문제 해결**:
+   - 그룹이 안 보임 → GET /api/groups 로직 확인 (group_members 조회 실패?)
+   - 멤버가 0명 → member_count 계산 로직 확인
+   - 이름이 안 보임 → users 테이블 조회 로직 확인
+
 ---
 
 ## 📞 질문 사항
 
+Q: 멤버 추가 시 이름을 입력하는 이유는?
+A: ❌ 더 이상 입력받지 않습니다. 이메일과 직책만 입력받고, 백엔드에서 이메일로 users 테이블에서 사용자 정보(이름)를 자동으로 조회합니다.
+
+Q: "멤버가 0명"으로 표시되는 이유는?
+A: 여러 가지 원인이 있을 수 있습니다:
+   1. GET /api/groups에서 group_members 조회 실패
+   2. member_count 계산이 제대로 안 됨
+   3. 멤버 추가 후 group_members 테이블에 저장되지 않음
+   
+   **디버깅 방법**:
+   - 백엔드 로그 확인
+   - group_members 테이블 직접 확인: `SELECT * FROM group_members WHERE group_id = '...';`
+   - GET /api/groups/:id/members API 응답 확인
+
 Q: 프로필 테이블을 따로 만들어야 하나?
 A: 선택사항입니다. Supabase `auth.user.user_metadata.name`으로도 충분하지만, 
    추후 프로필 확장성을 위해서는 전용 테이블 권장
-
-Q: 기존 그룹의 admin은?
-A: admin_name이 NULL이면 프론트에서 이메일 앞부분 사용하거나, 
-   마이그레이션 쿼리로 group_members의 admin 이름으로 채우기
 
 Q: 여러 admin이 있는 경우?
 A: 현재는 그룹 생성자만 admin, 나머지는 member

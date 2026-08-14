@@ -1098,7 +1098,6 @@ function GroupListView({ theme, groups, onSelect, onDelete }) {
 
 function GroupDetailView({ theme, group, token, onRefresh, onDeleteGroup, onMemberAdded, onMemberDeleted }) {
   const [showAddModal, setShowAddModal] = useState(false);
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [position, setPosition] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1107,7 +1106,7 @@ function GroupDetailView({ theme, group, token, onRefresh, onDeleteGroup, onMemb
 
   const handleAddMember = async (e) => {
     e.preventDefault();
-    if (!name.trim() || !email.trim() || !position.trim()) return;
+    if (!email.trim() || !position.trim()) return;
     setLoading(true);
 
     try {
@@ -1118,7 +1117,6 @@ function GroupDetailView({ theme, group, token, onRefresh, onDeleteGroup, onMemb
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          name: name.trim(),
           email: email.trim().toLowerCase(),
           position: position.trim(),
         }),
@@ -1128,22 +1126,20 @@ function GroupDetailView({ theme, group, token, onRefresh, onDeleteGroup, onMemb
         const responseBody = await res.json().catch(() => null);
         const addedMemberFromResponse = getAddedMemberFromResponse(responseBody);
         
-        // 추가된 멤버를 명확한 구조로 생성 (이름 필드 강조)
+        // 백엔드에서 반환된 사용자 정보(이름) 사용
         const addedMember = {
           ...addedMemberFromResponse,
           id: addedMemberFromResponse?.id || `pending-${email.trim().toLowerCase()}`,
           user_id: addedMemberFromResponse?.user_id,
-          name: name.trim(), // 입력받은 이름 우선
           email: email.trim().toLowerCase(),
           position: position.trim(),
           users: {
-            name: name.trim(),
+            name: addedMemberFromResponse?.users?.name || addedMemberFromResponse?.name || email.trim().split('@')[0],
             email: email.trim().toLowerCase(),
           },
         };
         
         setShowAddModal(false);
-        setName('');
         setEmail('');
         setPosition('');
         if (onMemberAdded) onMemberAdded(addedMember);
@@ -1266,16 +1262,8 @@ function GroupDetailView({ theme, group, token, onRefresh, onDeleteGroup, onMemb
             </div>
             <form onSubmit={handleAddMember} className="space-y-3">
               <input
-                type="text"
-                placeholder="이름"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className={`w-full rounded-xl border p-3 text-sm bg-transparent outline-none ${theme.inputBorder} ${theme.text}`}
-                required
-              />
-              <input
                 type="email"
-                placeholder="이메일"
+                placeholder="멤버 이메일"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className={`w-full rounded-xl border p-3 text-sm bg-transparent outline-none ${theme.inputBorder} ${theme.text}`}
@@ -1283,7 +1271,7 @@ function GroupDetailView({ theme, group, token, onRefresh, onDeleteGroup, onMemb
               />
               <input
                 type="text"
-                placeholder="직책"
+                placeholder="직책 (예: 회장, 부회장)"
                 value={position}
                 onChange={(e) => setPosition(e.target.value)}
                 className={`w-full rounded-xl border p-3 text-sm bg-transparent outline-none ${theme.inputBorder} ${theme.text}`}
@@ -1299,8 +1287,8 @@ function GroupDetailView({ theme, group, token, onRefresh, onDeleteGroup, onMemb
                 </button>
                 <button
                   type="submit"
-                  disabled={loading || !name.trim() || !email.trim() || !position.trim()}
-                  className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-white ${loading || !name.trim() || !email.trim() || !position.trim() ? 'bg-blue-400' : 'bg-blue-600'}`}
+                  disabled={loading || !email.trim() || !position.trim()}
+                  className={`flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold text-white ${loading || !email.trim() || !position.trim() ? 'bg-blue-400' : 'bg-blue-600'}`}
                 >
                   {loading ? '추가 중...' : '추가'}
                 </button>
