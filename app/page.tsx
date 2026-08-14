@@ -241,6 +241,7 @@ function MeetingApp({ session }) {
   const [groups, setGroups] = useState([]);
   const [minutes, setMinutes] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const [minutesView, setMinutesView] = useState('list');
   const [selectedMinuteId, setSelectedMinuteId] = useState(null);
@@ -392,6 +393,7 @@ function MeetingApp({ session }) {
   };
 
   const handleGenerateAI = async (minuteId, rawContent) => {
+    setIsGenerating(true);
     try {
       const patchRes = await fetch(buildApiUrl(`/api/meetings/${minuteId}`), {
         method: 'PATCH',
@@ -402,11 +404,13 @@ function MeetingApp({ session }) {
       if (patchRes.status === 401) {
         alert('인증 토큰이 만료되었습니다. 다시 로그인하세요.');
         await supabase.auth.signOut();
+        setIsGenerating(false);
         return;
       }
 
       if (patchRes.status === 403) {
         alert('이 회의록을 수정할 권한이 없습니다.');
+        setIsGenerating(false);
         return;
       }
 
@@ -418,11 +422,13 @@ function MeetingApp({ session }) {
       if (res.status === 401) {
         alert('인증 토큰이 만료되었습니다. 다시 로그인하세요.');
         await supabase.auth.signOut();
+        setIsGenerating(false);
         return;
       }
 
       if (res.status === 403) {
         alert('이 회의록의 요약을 생성할 권한이 없습니다.');
+        setIsGenerating(false);
         return;
       }
 
@@ -437,6 +443,8 @@ function MeetingApp({ session }) {
     } catch (err) {
       console.error('AI 요약 요청 중 오류:', err);
       alert('AI 요약 요청 중 오류가 발생했습니다.');
+    } finally {
+      setIsGenerating(false);
     }
   };
 
@@ -528,6 +536,7 @@ function MeetingApp({ session }) {
                   theme={theme}
                   minute={selectedMinuteDetail}
                   token={token}
+                  isGenerating={isGenerating}
                   onGenerateAI={handleGenerateAI}
                   onRefresh={() => fetchMinuteDetail(selectedMinuteDetail.id)}
                 />
@@ -652,7 +661,7 @@ function MinutesListView({ theme, minutes, onSelect, onDelete }) {
                 <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-200 text-neutral-600 shrink-0">작성중</span>
               )}
             </div>
-            <p className={`text-xs ${theme.subtext} truncate`}>{m.meetingDate} · {m.groupName}</p>
+            <p className={`text-xs ${theme.subtext} truncate`}>{m.meeting_date}</p>
           </div>
           <button onClick={(e) => { e.stopPropagation(); onDelete(m.id); }} className="p-2 text-neutral-400 shrink-0" aria-label="삭제">
             <Trash2 size={16} />
@@ -663,18 +672,18 @@ function MinutesListView({ theme, minutes, onSelect, onDelete }) {
   );
 }
 
-function MinutesDetailView({ theme, minute, token, onGenerateAI, onRefresh }) {
-  const [content, setContent] = useState(minute.rawContent || '');
+function MinutesDetailView({ theme, minute, token, isGenerating, onGenerateAI, onRefresh }) {
+  const [content, setContent] = useState(minute.raw_content || '');
   const [editingContent, setEditingContent] = useState(false);
 
   return (
     <div className="space-y-4 pb-4">
       <div className="flex flex-wrap items-center gap-1.5">
-        {minute.attendees?.length === 0 ? (
+        {minute.meeting_attendees?.length === 0 ? (
           <span className={`text-xs ${theme.faint}`}>참석자 없음</span>
         ) : (
-          minute.attendees?.map((a) => (
-            <span key={a.userId} className="text-xs px-2.5 py-1 rounded-full bg-blue-100 text-blue-700">{a.name}</span>
+          minute.meeting_attendees?.map((a) => (
+            <span key={a.user_id} className="text-xs px-2.5 py-1 rounded-full bg-blue-100 text-blue-700">{a.users?.name || '사용자'}</span>
           ))
         )}
       </div>
@@ -691,10 +700,19 @@ function MinutesDetailView({ theme, minute, token, onGenerateAI, onRefresh }) {
           />
           <button
             onClick={() => onGenerateAI(minute.id, content)}
-            disabled={!content.trim()}
-            className={`w-full mt-3 py-3 rounded-2xl flex items-center justify-center gap-2 font-semibold text-white ${content.trim() ? 'bg-blue-600' : 'bg-neutral-400'}`}
+            disabled={!content.trim() || isGenerating}
+            className={`w-full mt-3 py-3 rounded-2xl flex items-center justify-center gap-2 font-semibold text-white transition ${!content.trim() || isGenerating ? 'bg-neutral-400' : 'bg-blue-600'}`}
           >
-            <Save size={16} /> AI 요약 생성하기
+            {isGenerating ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                생성 중... (5~10초)
+              </>
+            ) : (
+              <>
+                <Save size={16} /> AI 요약 생성하기
+              </>
+            )}
           </button>
         </div>
       ) : (
@@ -733,45 +751,32 @@ function MinutesDetailView({ theme, minute, token, onGenerateAI, onRefresh }) {
           </div>
 
           <div>
-            <p className={`text-sm font-bold ${theme.text} mb-2 flex items-center gap-1.5`}><Check size={15} className="text-emerald-500" /> 확정된 안건</p>
+            <p className={`text-sm font-bold ${theme.text} mb-2 flex items-center gap-1.5`}><Check size={15} className="text-emerald-500" /> 안건</p>
             <div className="space-y-2">
-              {minute.agendaItems?.filter(i => i.status === 'confirmed').map((item) => (
-                <div key={item.id} className={`rounded-xl border ${theme.cardBorder} ${theme.cardBg} p-3 text-sm ${theme.text}`}>{item.content}</div>
+              {minute.agenda_items?.map((item) => (
+                <div key={item.id} className={`rounded-xl border ${theme.cardBorder} ${theme.cardBg} p-3 text-sm ${theme.text}`}>{item.title || item.content}</div>
               ))}
+              {(!minute.agenda_items || minute.agenda_items.length === 0) && (
+                <div className={`text-xs ${theme.faint}`}>생성된 안건이 없습니다.</div>
+              )}
             </div>
           </div>
 
           <div>
-            <p className={`text-sm font-bold ${theme.text} mb-2 flex items-center gap-1.5`}><HelpCircle size={15} className="text-amber-500" /> 의견 필요 안건</p>
-            <div className="space-y-2">
-              {minute.agendaItems?.filter(i => i.status === 'needs_opinion').map((item) => (
-                <div key={item.id} className={`rounded-xl border ${theme.cardBorder} ${theme.cardBg} p-3`}>
-                  <p className={`text-sm ${theme.text} mb-1.5`}>{item.content}</p>
-                  <div className="flex gap-1.5 flex-wrap">
-                    {item.opinions?.map((op) => (
-                      <span key={op.userId} className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{op.name}: {op.opinion}</span>
-                    ))}
-                    {(!item.opinions || item.opinions.length === 0) && (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-neutral-200 text-neutral-600">의견 대기중</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <p className={`text-sm font-bold ${theme.text} mb-2 flex items-center gap-1.5`}><CheckSquare size={15} className="text-blue-500" /> 파생된 할 일</p>
+            <p className={`text-sm font-bold ${theme.text} mb-2 flex items-center gap-1.5`}><CheckSquare size={15} className="text-blue-500" /> 할 일</p>
             <div className="space-y-2">
               {minute.tasks?.map((t) => (
                 <div key={t.id} className={`w-full flex items-start gap-3 rounded-xl border ${theme.cardBorder} ${theme.cardBg} p-3 text-left`}>
-                  {t.done ? <CheckCircle2 size={18} className="text-blue-500 mt-0.5 shrink-0" /> : <Circle size={18} className={`${theme.faint} mt-0.5 shrink-0`} />}
+                  {t.status === 'done' ? <CheckCircle2 size={18} className="text-blue-500 mt-0.5 shrink-0" /> : <Circle size={18} className={`${theme.faint} mt-0.5 shrink-0`} />}
                   <div className="flex-1">
-                    <p className={`text-sm ${t.done ? `line-through ${theme.faint}` : theme.text}`}>{t.text}</p>
-                    <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{t.assigneeName || '담당자 미정'}</span>
+                    <p className={`text-sm ${t.status === 'done' ? `line-through ${theme.faint}` : theme.text}`}>{t.title}</p>
+                    {t.due_date && <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{t.due_date}</span>}
                   </div>
                 </div>
               ))}
+              {(!minute.tasks || minute.tasks.length === 0) && (
+                <div className={`text-xs ${theme.faint}`}>생성된 할 일이 없습니다.</div>
+              )}
             </div>
           </div>
         </div>
@@ -843,15 +848,87 @@ function GroupDetailView({ theme, group }) {
   return (
     <div className="space-y-4 pb-4">
       <h2 className={`text-base font-bold ${theme.text}`}>{group.name}</h2>
-      <p className={`text-xs ${theme.subtext}`}>생성일: {new Date(group.createdAt).toLocaleDateString()}</p>
+      {group.created_at && <p className={`text-xs ${theme.subtext}`}>생성일: {new Date(group.created_at).toLocaleDateString()}</p>}
+      
+      <div>
+        <p className={`text-sm font-bold ${theme.text} mb-2 flex items-center gap-1.5`}><Users size={15} /> 멤버 ({group.members?.length || 0}명)</p>
+        <div className="space-y-2">
+          {group.members?.map((m) => (
+            <div key={m.id} className={`rounded-xl border ${theme.cardBorder} ${theme.cardBg} p-3 flex items-center justify-between`}>
+              <div className="min-w-0">
+                <p className={`text-sm font-semibold ${theme.text}`}>{m.users?.name || m.user_email || '사용자'}</p>
+                <p className={`text-xs ${theme.subtext}`}>{m.role === 'admin' ? '관리자' : '멤버'}</p>
+              </div>
+            </div>
+          ))}
+          {(!group.members || group.members.length === 0) && (
+            <div className={`text-sm ${theme.subtext} text-center py-4`}>멤버가 없습니다.</div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 function MyTodoView({ theme, minutes, currentUser, onGoToMinute }) {
+  const allTasks = minutes.flatMap((m) =>
+    (m.tasks || []).map((t) => ({ ...t, meetingId: m.id, meetingTitle: m.title }))
+  );
+  
+  const pendingTasks = allTasks.filter((t) => t.status !== 'done');
+  const completedTasks = allTasks.filter((t) => t.status === 'done');
+
   return (
-    <div className={`text-center text-sm ${theme.subtext} pt-16`}>
-      할 일 관리 화면입니다.
+    <div className="space-y-4 pb-4">
+      {pendingTasks.length === 0 && completedTasks.length === 0 ? (
+        <div className={`text-center text-sm ${theme.subtext} pt-16`}>할 일이 없습니다.</div>
+      ) : (
+        <>
+          {pendingTasks.length > 0 && (
+            <div>
+              <p className={`text-sm font-bold ${theme.text} mb-2 flex items-center gap-1.5`}><CheckSquare size={15} className="text-blue-500" /> 진행 중인 할 일 ({pendingTasks.length})</p>
+              <div className="space-y-2">
+                {pendingTasks.map((t) => (
+                  <div
+                    key={t.id}
+                    onClick={() => onGoToMinute(t.meetingId)}
+                    className={`w-full flex items-start gap-3 rounded-xl border cursor-pointer transition ${theme.cardBorder} ${theme.cardBg} p-3 text-left hover:opacity-80`}
+                  >
+                    <Circle size={18} className={`${theme.faint} mt-0.5 shrink-0`} />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-semibold ${theme.text} truncate`}>{t.title}</p>
+                      <p className={`text-xs ${theme.subtext} truncate`}>{t.meetingTitle}</p>
+                      {t.due_date && <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{t.due_date}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {completedTasks.length > 0 && (
+            <div>
+              <p className={`text-sm font-bold ${theme.text} mb-2 flex items-center gap-1.5`}><CheckCircle2 size={15} className="text-emerald-500" /> 완료한 할 일 ({completedTasks.length})</p>
+              <div className="space-y-2">
+                {completedTasks.map((t) => (
+                  <div
+                    key={t.id}
+                    onClick={() => onGoToMinute(t.meetingId)}
+                    className={`w-full flex items-start gap-3 rounded-xl border cursor-pointer transition ${theme.cardBorder} ${theme.cardBg} p-3 text-left hover:opacity-80`}
+                  >
+                    <CheckCircle2 size={18} className="text-emerald-500 mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm ${theme.text} truncate line-through ${theme.faint}`}>{t.title}</p>
+                      <p className={`text-xs ${theme.subtext} truncate`}>{t.meetingTitle}</p>
+                      {t.due_date && <span className="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">{t.due_date}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
