@@ -543,9 +543,9 @@ function MeetingApp({ session }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          group_id: selectedGroupIdForMinute,
+          groupId: selectedGroupIdForMinute,
           title: minuteTitle.trim(),
-          meeting_date: minuteDate
+          meetingDate: minuteDate
         })
       });
       if (res.ok) {
@@ -626,7 +626,7 @@ function MeetingApp({ session }) {
       const patchRes = await fetch(buildApiUrl(`/api/meetings/${minuteId}`), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ raw_content: rawContent })
+        body: JSON.stringify({ rawContent: rawContent })
       });
 
       if (patchRes.status === 401) {
@@ -1058,7 +1058,7 @@ function MinutesDetailView({ theme, minute, token, isGenerating, onGenerateAI, o
                     await fetch(buildApiUrl(`/api/meetings/${minute.id}`), {
                       method: 'PATCH',
                       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                      body: JSON.stringify({ raw_content: content })
+                      body: JSON.stringify({ rawContent: content })
                     });
                     setEditingContent(false);
                     onRefresh();
