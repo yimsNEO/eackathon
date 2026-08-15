@@ -403,7 +403,7 @@ Authorization: Bearer <JWT>
 ---
 
 #### POST /api/meetings
-새 회의록 생성
+새 회의록 생성 (그룹의 모든 멤버가 생성 가능)
 
 **요청:**
 ```json
@@ -426,6 +426,13 @@ Authorization: Bearer <JWT>
   "created_at": "2026-08-15T10:00:00Z"
 }
 ```
+
+**백엔드 로직:**
+1. JWT에서 `user_id` 추출
+2. `group_members` 테이블에서 현재 사용자가 해당 그룹의 멤버인지 확인
+3. 멤버가 아니면 403 반환
+4. 멤버면 회의록 생성 진행
+5. **✨ 주의: admin만 생성 가능이 아니라, 그룹 멤버 누구나 생성 가능**
 
 ---
 
