@@ -23,11 +23,9 @@ router.get('/', authenticateUser, async (req, res) => {
         raw_content,
         generated,
         created_at,
-        updated_at,
         meeting_attendees (
-          id,
           user_id,
-          users ( id, name, position, avatar_url )
+          users:profiles!meeting_attendees_user_id_fkey ( id, name, avatar_url )
         )
       `);
 
@@ -126,17 +124,22 @@ router.get('/:meetingId', authenticateUser, async (req, res) => {
         raw_content,
         generated,
         created_at,
-        updated_at,
         meeting_attendees (
-          id,
           user_id,
-          users ( id, name, position, avatar_url )
+          users:profiles!meeting_attendees_user_id_fkey ( id, name, avatar_url )
         ),
         agenda_items (
           id,
           content,
           status,
-          created_at
+          created_at,
+          agenda_opinions (
+            id,
+            user_id,
+            opinion,
+            created_at,
+            profile:profiles!agenda_opinions_user_id_fkey ( id, name, avatar_url )
+          ),
         ),
         tasks (
           id,
@@ -165,7 +168,16 @@ router.get('/:meetingId', authenticateUser, async (req, res) => {
       return res.status(403).json({ error: { code: 'FORBIDDEN', message: '이 회의에 접근 권한이 없습니다.' } });
     }
 
-    res.json(meeting);
+    res.json({
+      ...meeting,
+      agenda_items: (meeting.agenda_items || []).map((agenda) => ({
+        ...agenda,
+        agenda_opinions: (agenda.agenda_opinions || []).map((assignment) => ({
+          ...assignment,
+          opinion_status: assignment.opinion === null ? 'pending' : 'submitted'
+        }))
+      }))
+    });
   } catch (err) {
     res.status(500).json({ error: { code: 'SERVER_ERROR', message: err.message } });
   }
@@ -324,7 +336,14 @@ router.post('/:meetingId/generate', authenticateUser, async (req, res) => {
 
     const memberByName = new Map(groupMembers.map(({ name, user_id }) => [name.trim(), user_id]));
     const agendasToInsert = result.agenda_items.map((agenda) => ({ meeting_id: meetingId, content: agenda.content, status: agenda.status }));
-    const tasksToInsert = result.tasks.map((task) => ({ meeting_id: meetingId, text: task.text, assignee_id: task.assignee_name ? memberByName.get(task.assignee_name.trim()) || null : null, done: false }));
+    const taskEntries = result.tasks.flatMap((task) => {
+      const assigneeNames = task.assignee_name
+        ? task.assignee_name.split(',').map((name) => name.trim()).filter(Boolean)
+        : [null];
+      return assigneeNames.map((assignee_name) => ({ ...task, assignee_name }));
+    });
+    const validTaskEntries = taskEntries.filter((task) => !task.assignee_name || memberByName.has(task.assignee_name));
+    const tasksToInsert = validTaskEntries.map((task) => ({ meeting_id: meetingId, text: task.text, assignee_id: task.assignee_name ? memberByName.get(task.assignee_name) : null, done: false }));
 
     let savedAgendas = [];
     if (agendasToInsert.length) {
@@ -332,6 +351,30 @@ router.post('/:meetingId/generate', authenticateUser, async (req, res) => {
       if (error) return res.status(500).json({ error: { code: 'DB_ERROR', message: error.message } });
       savedAgendas = data;
     }
+    const { data: attendees, error: attendeesError } = await supabase
+      .from('meeting_attendees')
+      .select('user_id')
+      .eq('meeting_id', meetingId);
+    if (attendeesError) return res.status(500).json({ error: { code: 'DB_ERROR', message: attendeesError.message } });
+
+    const attendeeIds = new Set((attendees || []).map((attendee) => attendee.user_id));
+    const opinionAssigneeIds = groupMembers
+      .map((member) => member.user_id)
+      .filter((memberId) => !attendeeIds.has(memberId));
+    const opinionAssignmentsToInsert = savedAgendas
+      .filter((agenda) => agenda.status === 'needs_opinion')
+      .flatMap((agenda) => opinionAssigneeIds.map((user_id) => ({ agenda_item_id: agenda.id, user_id, opinion: null })));
+
+    let savedOpinionAssignments = [];
+    if (opinionAssignmentsToInsert.length) {
+      const { data, error } = await supabase
+        .from('agenda_opinions')
+        .insert(opinionAssignmentsToInsert)
+        .select('id, agenda_item_id, user_id, opinion, created_at');
+      if (error) return res.status(500).json({ error: { code: 'DB_ERROR', message: error.message } });
+      savedOpinionAssignments = data || [];
+    }
+
     let savedTasks = [];
     if (tasksToInsert.length) {
       const { data, error } = await supabase.from('tasks').insert(tasksToInsert).select('id, text, assignee_id, done');
@@ -351,7 +394,7 @@ router.post('/:meetingId/generate', authenticateUser, async (req, res) => {
       meeting_id: updatedMeeting.id,
       generated: updatedMeeting.generated,
       agenda_items: savedAgendas,
-      tasks: savedTasks.map((task, index) => ({ ...task, assignee_name: result.tasks[index].assignee_name }))
+      tasks: savedTasks.map((task, index) => ({ ...task, assignee_name: validTaskEntries[index].assignee_name }))
     });
   } catch (err) {
     const isInvalidJson = err instanceof SyntaxError;

@@ -10,8 +10,8 @@ router.get('/', async (req, res) => {
     .from('tasks')
     .select(`
       *,
-      meetings ( title, meeting_date ),
-      users:assignee_id ( name )
+      meetings ( group_id, title, meeting_date ),
+      assignee:profiles!tasks_assignee_id_fkey ( id, name, avatar_url )
     `);
 
   if (userId) {
@@ -20,7 +20,24 @@ router.get('/', async (req, res) => {
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  const groupIds = [...new Set((data || []).map((task) => task.meetings?.group_id).filter(Boolean))];
+  if (!groupIds.length) return res.json((data || []).filter((task) => !task.assignee_id));
+
+  const { data: memberships, error: membershipsError } = await supabase
+    .from('group_members')
+    .select('group_id, user_id')
+    .in('group_id', groupIds);
+  if (membershipsError) return res.status(500).json({ error: membershipsError.message });
+
+  const memberKeys = new Set((memberships || []).map((member) => `${member.group_id}:${member.user_id}`));
+  const visibleTasks = (data || []).filter((task) => {
+    if (!task.assignee_id) return true;
+    const groupId = task.meetings?.group_id;
+    return Boolean(groupId && memberKeys.has(`${groupId}:${task.assignee_id}`));
+  });
+
+  res.json(visibleTasks);
 });
 
 // 할일 상태 변경 (todo -> done 토글)

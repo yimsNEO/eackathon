@@ -6,6 +6,7 @@ require('dotenv').config();
 // 1. 화면별 라우터 불러오기
 const meetingsRouter = require('./routes/meetings');
 const groupRouter = require('./routes/group');
+const agendaItemsRouter = require('./routes/agendaItems');
 const calendarRouter = require('./routes/calender');
 const todoRouter = require('./routes/todo');
 const usersRouter = require('./routes/users');
@@ -20,6 +21,7 @@ app.use(express.json());
 // 3. API 엔드포인트 연결
 app.use('/api/meetings', meetingsRouter);
 app.use('/api/groups', groupRouter);
+app.use('/api/agenda-items', agendaItemsRouter);
 app.use('/api/calendar', calendarRouter);
 app.use('/api/todos', todoRouter);
 app.use('/api/users', usersRouter);

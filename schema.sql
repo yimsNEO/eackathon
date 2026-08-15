@@ -60,7 +60,7 @@ create table if not exists agenda_opinions (
   id uuid primary key default gen_random_uuid(),
   agenda_item_id uuid references agenda_items(id) on delete cascade,
   user_id uuid references profiles(id) on delete cascade,
-  opinion text not null,
+  opinion text,
   created_at timestamptz default now(),
   unique (agenda_item_id, user_id)
 );
