@@ -166,7 +166,7 @@ create table agenda_opinions (
   unique (agenda_item_id, user_id)
 );
 
--- 8. 할일
+-- 8. 할일.
 create table tasks (
   id uuid primary key default gen_random_uuid(),
   meeting_id uuid references meetings(id) on delete cascade,
